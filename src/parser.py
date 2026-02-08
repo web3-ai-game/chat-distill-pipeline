@@ -11,7 +11,7 @@ import zipfile
 import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Optional
-from datetime import datetime
+from datetime import datetime, timezone
 
 
 class DocumentParser:
@@ -76,7 +76,7 @@ class DocumentParser:
             "content": text,
             "content_length": len(text),
             "error": error,
-            "parsed_at": datetime.utcnow().isoformat(),
+            "parsed_at": datetime.now(timezone.utc).isoformat(),
         }
 
     def _parse_document(self, file_path: Path, ext: str) -> str:

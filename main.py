@@ -10,7 +10,7 @@ import os
 import re
 import sys
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timezone
 
 from dotenv import load_dotenv
 try:
@@ -42,7 +42,6 @@ def load_env_chain() -> list[Path]:
         BASE_DIR / ".env",
         BASE_DIR.parent / "deepweay-me" / ".env",
         BASE_DIR.parent / "deepweay-me" / ".env.local",
-        BASE_DIR.parent / "deepweay-me" / ".env.production",
     ]
     loaded = []
 
@@ -297,7 +296,7 @@ def run_full_pipeline(config: dict, source_args: list[str] | None = None):
     print(f"   Parsed: {len(parsed)} files")
     print(f"   Distilled: {sum(1 for e in distilled if e.get('distilled'))}")
     print(f"   Output: {OUTPUT_DIR}/")
-    print(f"   Finished: {datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}")
+    print(f"   Finished: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}")
 
 
 def load_json_files(pattern: str) -> list[dict]:
@@ -342,7 +341,7 @@ def main():
     config = load_config(args.config_path)
 
     print("☁️🧪 Cloud Distill Pipeline")
-    print(f"   Started: {datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}")
+    print(f"   Started: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}")
     print(f"   Base: {BASE_DIR}")
     print(f"   Config: {config.get('_config_path')}")
     if loaded_envs:

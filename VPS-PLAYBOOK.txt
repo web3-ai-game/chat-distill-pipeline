@@ -1,0 +1,421 @@
+================================================================================
+  CLOUD DISTILL - VPS DEPLOYMENT PLAYBOOK
+  Target: DigitalOcean 4vCPU / 8GB RAM / 360GB / Ubuntu
+  Repo: https://github.com/web3-ai-game/gcp-cloud-distill (PRIVATE)
+  Date: 2026-02-09
+================================================================================
+
+SECURITY:
+- All keys below are PLACEHOLDERS. Operator must paste real values.
+- After job completes, wipe secrets: rm -f .env ~/.config/rclone/rclone.conf
+- rclone tokens expire in ~1hr. Re-auth on local Mac if expired:
+    rclone authorize onedrive
+    rclone authorize drive
+
+================================================================================
+PHASE 0: SYSTEM SETUP (as root)
+================================================================================
+
+apt update && apt upgrade -y
+apt install -y python3 python3-pip python3-venv git curl unzip jq
+
+# Install rclone
+curl https://rclone.org/install.sh | bash
+
+# Install GitHub CLI
+curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
+  | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
+  | tee /etc/apt/sources.list.d/github-cli.list > /dev/null
+apt update && apt install -y gh
+
+# Login to GitHub (paste PAT when prompted)
+gh auth login
+
+# Verify
+python3 --version && rclone version && gh --version
+
+================================================================================
+PHASE 1: CLONE PROJECT
+================================================================================
+
+cd /root
+gh repo clone web3-ai-game/gcp-cloud-distill
+cd /root/gcp-cloud-distill
+
+# Create venv and install deps
+python3 -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+
+# Create working directories
+mkdir -p raw/onedrive raw/gdrive parsed distilled output/markdown output/vectors
+
+================================================================================
+PHASE 2: CONFIGURE SECRETS
+================================================================================
+
+# --- 2a. Environment variables ---
+# Create .env with your REAL keys (replace placeholders)
+
+cat > /root/gcp-cloud-distill/.env << 'EOF'
+# Gemini (free, recommended for VPS)
+GEMINI_API_KEY=__PASTE_YOUR_GEMINI_KEY__
+
+# Grok / xAI (optional, costs money)
+GROK_API_KEY=__PASTE_YOUR_XAI_KEY__
+XAI_API_KEY=__PASTE_YOUR_XAI_KEY__
+
+# Notion (optional, for export to Notion)
+NOTION_API_KEY=__PASTE_YOUR_NOTION_KEY__
+NOTION_PARENT_PAGE_ID=__PASTE_NOTION_PAGE_ID__
+
+# GitHub (already logged in via gh auth)
+EOF
+
+# --- 2b. rclone config ---
+# Get fresh tokens from your LOCAL Mac first:
+#   rclone authorize onedrive   -> copy the JSON token
+#   rclone authorize drive      -> copy the JSON token
+# Then paste them below.
+
+mkdir -p ~/.config/rclone
+
+cat > ~/.config/rclone/rclone.conf << 'EOF'
+[onedrive]
+type = onedrive
+drive_type = personal
+drive_id = 35C2A827024B1859
+token = __PASTE_ONEDRIVE_TOKEN_JSON__
+
+[gdrive]
+type = drive
+scope = drive.readonly
+token = __PASTE_GDRIVE_TOKEN_JSON__
+EOF
+
+# Verify connections
+rclone lsd onedrive: --max-depth 1
+rclone lsd gdrive: --max-depth 1
+
+================================================================================
+PHASE 3: PULL FILES FROM CLOUD
+================================================================================
+
+cd /root/gcp-cloud-distill
+source venv/bin/activate
+
+# Pull OneDrive (skip files >500MB, 8 parallel transfers)
+rclone copy onedrive: raw/onedrive \
+  --progress --transfers 8 --checkers 16 \
+  --max-size 500M --stats 10s --stats-one-line
+
+# Pull Google Drive
+rclone copy gdrive: raw/gdrive \
+  --progress --transfers 8 --checkers 16 \
+  --max-size 500M --stats 10s --stats-one-line
+
+# Check what we got
+du -sh raw/onedrive raw/gdrive
+find raw/ -type f | wc -l
+
+================================================================================
+PHASE 4: RUN PIPELINE
+================================================================================
+
+cd /root/gcp-cloud-distill
+source venv/bin/activate
+
+# Option A: Run full pipeline (parse -> distill -> sanitize -> export)
+python main.py run
+
+# Option B: Run step by step (recommended for debugging)
+python main.py parse           # Parse all raw files
+python main.py distill         # AI distillation (Gemini free)
+python main.py sanitize        # Remove sensitive info
+python main.py export          # Generate markdown + vectors
+
+# Option C: Parse specific local directory
+python main.py parse /root/some-other-folder
+
+================================================================================
+PHASE 5: EXPORT TO NOTION (optional)
+================================================================================
+
+# Make sure NOTION_API_KEY and NOTION_PARENT_PAGE_ID are set in .env
+# Edit config.yaml to enable notion export:
+
+sed -i 's/notion:\n    enabled: false/notion:\n    enabled: true/' config.yaml
+
+# Or manually edit config.yaml:
+#   export:
+#     notion:
+#       enabled: true
+
+python main.py export
+
+================================================================================
+PHASE 6: PUSH RESULTS TO GITHUB
+================================================================================
+
+cd /root/gcp-cloud-distill
+
+# The output/ directory is gitignored by default.
+# Create a separate repo for the distilled output:
+
+cd output/markdown
+git init && git add -A
+git commit -m "Distilled knowledge base from OneDrive + Google Drive"
+gh repo create gcp-distilled-knowledge --private --source . --push
+
+# Or push vectors:
+cd /root/gcp-cloud-distill/output/vectors
+git init && git add -A
+git commit -m "Vector seeds from cloud distillation"
+gh repo create gcp-vector-seeds --private --source . --push
+
+================================================================================
+PHASE 7: DEPLOY VECTOR DATABASE (FREE, self-hosted on this VPS)
+================================================================================
+
+# BUDGET RULE: $5 hard cap. Anything over $5 = NO.
+# Best option: ChromaDB on this VPS = $0. Qdrant also $0.
+# DO NOT use paid vector DB services (Pinecone paid, Weaviate paid, etc.)
+
+# --- Option A: ChromaDB (recommended, Python-native, lightweight) ---
+# Runs in-process or as a server. Perfect for 4v8g VPS.
+
+pip install chromadb
+
+# Create a loader script to import distilled JSONL into ChromaDB:
+cat > /root/gcp-cloud-distill/load_vectors.py << 'PYEOF'
+#!/usr/bin/env python3
+"""Load distilled JSONL into ChromaDB for semantic search."""
+
+import json
+import chromadb
+from pathlib import Path
+
+VECTORS_DIR = Path("/root/gcp-cloud-distill/output/vectors")
+CHROMA_DIR = Path("/root/gcp-cloud-distill/chromadb_data")
+
+def load_jsonl(path):
+    records = []
+    with open(path, "r", encoding="utf-8") as f:
+        for line in f:
+            if line.strip():
+                records.append(json.loads(line))
+    return records
+
+def main():
+    client = chromadb.PersistentClient(path=str(CHROMA_DIR))
+
+    # Load each channel as a separate collection
+    channels = {
+        "all": "all_knowledge.jsonl",
+        "persona": "persona_knowledge.jsonl",
+        "tech_stack": "tech_stack_knowledge.jsonl",
+        "timeline": "timeline_knowledge.jsonl",
+    }
+
+    for name, filename in channels.items():
+        filepath = VECTORS_DIR / filename
+        if not filepath.exists():
+            print(f"Skip {name}: {filepath} not found")
+            continue
+
+        records = load_jsonl(filepath)
+        if not records:
+            print(f"Skip {name}: empty")
+            continue
+
+        # Create or get collection (ChromaDB auto-embeds with built-in model)
+        collection = client.get_or_create_collection(
+            name=f"cloud_distill_{name}",
+            metadata={"hnsw:space": "cosine"}
+        )
+
+        # Batch insert
+        ids = [r["id"] for r in records]
+        documents = [r["content"] for r in records]
+        metadatas = [r.get("metadata", {}) for r in records]
+
+        # ChromaDB has a batch limit of 5461
+        batch_size = 5000
+        for i in range(0, len(ids), batch_size):
+            batch_ids = ids[i:i+batch_size]
+            batch_docs = documents[i:i+batch_size]
+            batch_meta = metadatas[i:i+batch_size]
+            # Sanitize metadata (ChromaDB only accepts str/int/float/bool)
+            clean_meta = []
+            for m in batch_meta:
+                clean = {}
+                for k, v in m.items():
+                    if isinstance(v, (str, int, float, bool)):
+                        clean[k] = v
+                    elif isinstance(v, list):
+                        clean[k] = ", ".join(str(x) for x in v)
+                    else:
+                        clean[k] = str(v)
+                clean_meta.append(clean)
+            collection.upsert(ids=batch_ids, documents=batch_docs, metadatas=clean_meta)
+
+        print(f"  {name}: loaded {len(ids)} records into ChromaDB")
+
+    print(f"\nChromaDB data stored at: {CHROMA_DIR}")
+    print("Query example:")
+    print('  collection = client.get_collection("cloud_distill_all")')
+    print('  results = collection.query(query_texts=["firebase deployment"], n_results=5)')
+
+if __name__ == "__main__":
+    main()
+PYEOF
+
+# Run it:
+cd /root/gcp-cloud-distill
+source venv/bin/activate
+python load_vectors.py
+
+# Test a query:
+python3 -c "
+import chromadb
+client = chromadb.PersistentClient(path='chromadb_data')
+col = client.get_collection('cloud_distill_all')
+print(f'Total records: {col.count()}')
+results = col.query(query_texts=['AI deployment'], n_results=3)
+for i, doc in enumerate(results['documents'][0]):
+    print(f'\n--- Result {i+1} ---')
+    print(doc[:200])
+"
+
+# --- Option B: Qdrant (if you want REST API access) ---
+# Also free, self-hosted. Heavier than ChromaDB but has nice REST/gRPC API.
+# Good if you want other services to query the vector DB.
+
+# Install via Docker (if Docker is available):
+# apt install -y docker.io
+# docker run -d --name qdrant -p 6333:6333 -v /root/qdrant_data:/qdrant/storage qdrant/qdrant
+# Then use qdrant-client Python package to load data.
+# Skip this if ChromaDB is sufficient.
+
+================================================================================
+PHASE 7b: DO API - SPIN UP ADDITIONAL SERVICES (optional)
+================================================================================
+
+# This VPS has DO API access with ~$50 credit.
+# All services are basic tier. Max droplet: 4v8g ($48/mo).
+# Use this to create dedicated services if needed.
+
+# Add DO API token to .env:
+# DO_API_TOKEN=__PASTE_DO_TOKEN__
+
+# Example: Create a dedicated Qdrant droplet ($6/mo, 1v1g is enough)
+# curl -X POST "https://api.digitalocean.com/v2/droplets" \
+#   -H "Authorization: Bearer $DO_API_TOKEN" \
+#   -H "Content-Type: application/json" \
+#   -d '{
+#     "name": "qdrant-vector-db",
+#     "region": "sgp1",
+#     "size": "s-1vcpu-1gb",
+#     "image": "ubuntu-24-04-x64",
+#     "user_data": "#!/bin/bash\napt update && apt install -y docker.io\ndocker run -d --restart=always -p 6333:6333 -v /data:/qdrant/storage qdrant/qdrant"
+#   }'
+
+# Example: List existing droplets
+# curl -s "https://api.digitalocean.com/v2/droplets" \
+#   -H "Authorization: Bearer $DO_API_TOKEN" | jq '.droplets[] | {name, ip: .networks.v4[0].ip_address, status}'
+
+# BUDGET NOTE: Keep total DO spend under $50/mo (free credit).
+# s-1vcpu-1gb = $6/mo, s-1vcpu-2gb = $12/mo, s-2vcpu-4gb = $24/mo
+
+================================================================================
+PHASE 8: CLEANUP (IMPORTANT - SECURITY)
+================================================================================
+
+# Remove all sensitive data from VPS
+rm -f /root/gcp-cloud-distill/.env
+rm -f ~/.config/rclone/rclone.conf
+rm -rf /root/gcp-cloud-distill/raw/    # Remove pulled files
+
+# Optional: destroy the droplet entirely after downloading output
+
+================================================================================
+CONFIG REFERENCE
+================================================================================
+
+config.yaml key settings for VPS:
+
+  distill:
+    provider: "gemini"          # Free on VPS
+    temperature: 0.1            # Low temp = precise extraction
+    budget_usd: 0               # 0 = unlimited (gemini is free)
+    max_documents: 500          # Safety cap
+    gemini:
+      model: "gemini-2.0-flash"
+      max_tokens: 4000
+
+  sanitize:
+    enabled: true               # Auto-remove phone/email/ID/keys
+
+  export:
+    markdown:
+      enabled: true             # Always generate MD
+    vector:
+      enabled: true             # Generate JSONL for vector DB
+    notion:
+      enabled: false            # Set to true if you have Notion keys
+    github:
+      enabled: false            # Use manual push (Phase 6) instead
+
+================================================================================
+TROUBLESHOOTING
+================================================================================
+
+Q: rclone says "token expired"
+A: On your LOCAL Mac, run: rclone authorize onedrive (or drive)
+   Copy the new token JSON, paste into VPS rclone.conf
+
+Q: Gemini API returns 429 (rate limit)
+A: Increase delay_seconds in config.yaml (e.g. 2.0)
+
+Q: Some DOCX/PDF files fail to parse
+A: Normal. The parser logs failures. Check parsed/*.json for error details.
+
+Q: Pipeline stops mid-way
+A: It saves checkpoints every 20 docs. Just re-run the same step.
+
+Q: How to distill with Grok instead of Gemini?
+A: Edit config.yaml: distill.provider: "grok"
+   Set GROK_API_KEY in .env. Note: Grok costs $3/M input + $15/M output.
+
+================================================================================
+FILE STRUCTURE AFTER COMPLETION
+================================================================================
+
+/root/gcp-cloud-distill/
+  raw/                      # Original files (DELETE after done)
+    onedrive/               # ~1TB OneDrive content
+    gdrive/                 # Google Drive content
+  parsed/                   # Parsed text JSON
+    onedrive.json
+    gdrive.json
+  distilled/                # AI-distilled JSON
+    distilled.json
+    sanitized.json
+  output/
+    markdown/               # Human-readable MD docs
+      INDEX.md
+      technical/
+      business/
+      personal/
+      ...
+    vectors/                # Vector DB seeds
+      all_knowledge.jsonl
+      persona_knowledge.jsonl
+      tech_stack_knowledge.jsonl
+      timeline_knowledge.jsonl
+      manifest.json
+
+================================================================================
+END OF PLAYBOOK
+================================================================================

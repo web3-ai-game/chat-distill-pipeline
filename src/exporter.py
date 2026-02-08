@@ -9,7 +9,7 @@ import subprocess
 import hashlib
 from pathlib import Path
 from typing import Optional
-from datetime import datetime
+from datetime import datetime, timezone
 
 
 class MarkdownExporter:
@@ -34,7 +34,7 @@ class MarkdownExporter:
         index_path = self.output_dir / "INDEX.md"
         with open(index_path, "w", encoding="utf-8") as f:
             f.write("# Cloud Distill - Knowledge Base\n\n")
-            f.write(f"> Generated: {datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}\n\n")
+            f.write(f"> Generated: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}\n\n")
 
             total = sum(len(v) for v in by_category.values())
             f.write(f"**Total documents**: {total}\n\n")
@@ -141,7 +141,7 @@ class VectorExporter:
 
     def export(self, entries: list[dict]) -> dict:
         """Export persona / tech stack / timeline vector seeds."""
-        now = datetime.utcnow().isoformat() + "Z"
+        now = datetime.now(timezone.utc).isoformat()
         buckets = {
             "persona": [],
             "tech_stack": [],
