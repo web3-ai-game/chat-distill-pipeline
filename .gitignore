@@ -1,0 +1,19 @@
+# Raw files from cloud (large, private)
+raw/
+parsed/
+distilled/
+output/
+
+# Environment
+.env
+*.pyc
+__pycache__/
+.venv/
+venv/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
