@@ -1,0 +1,25 @@
+# Raw files from cloud (large, private)
+raw/
+parsed/
+distilled/
+output/
+
+# Environment and credentials
+.env
+.env.*
+!.env.example
+*credential*
+*service-account*
+*.pem
+rclone.conf
+*.pyc
+__pycache__/
+.venv/
+venv/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log

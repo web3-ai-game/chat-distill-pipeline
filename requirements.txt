@@ -1,0 +1,29 @@
+# Cloud Distill - Python Dependencies
+
+# Document parsing
+python-docx>=1.1.0
+PyPDF2>=3.0.0
+python-pptx>=0.6.23
+openpyxl>=3.1.0
+striprtf>=0.0.26
+
+# Image OCR (optional, for text extraction from images)
+Pillow>=10.0.0
+
+# AI APIs
+requests>=2.31.0
+google-genai>=1.0.0
+
+# Config
+pyyaml>=6.0.0
+python-dotenv>=1.0.0
+
+# Notion API
+notion-client>=2.2.0
+
+# Progress
+tqdm>=4.66.0
+rich>=13.0.0
+
+# Sanitization helpers
+regex>=2024.0.0
