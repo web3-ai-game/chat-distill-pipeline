@@ -18,7 +18,7 @@ python3 main.py --demo
 
 樣例在 `demo_sample.txt`。主機名是 `DO SGP1`。位址是 RFC 5737。不讀 API key，不連向量庫，不拉雲端硬碟。
 
-完整流程需要你自己的匯出檔與 `.env`。不要把聊天紀錄提交進 git。
+完整流程需要你自己的匯出檔與 `.env`。不要把聊天紀錄提交進 git。PDF 解析使用 `pypdf`。
 
 <a id="en"></a>
 
@@ -36,7 +36,7 @@ python3 main.py --demo
 
 The sample is `demo_sample.txt`. The host label is `DO SGP1`. Addresses are RFC 5737. The demo reads no API key, no vector database, and no cloud drive.
 
-The full pipeline needs your own export and a local `.env`. Do not commit chat logs.
+The full pipeline needs your own export and a local `.env`. Do not commit chat logs. PDF parsing uses `pypdf`.
 
 ## License
 

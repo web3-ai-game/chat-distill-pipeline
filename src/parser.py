@@ -114,9 +114,9 @@ class DocumentParser:
             return self._parse_docx_fallback(file_path)
 
     def _parse_pdf(self, file_path: Path) -> str:
-        """Parse PDF using PyPDF2."""
+        """Parse PDF using pypdf."""
         try:
-            from PyPDF2 import PdfReader
+            from pypdf import PdfReader
             reader = PdfReader(str(file_path))
             pages = []
             for i, page in enumerate(reader.pages):
